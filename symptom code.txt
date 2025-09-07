@@ -1,0 +1,117 @@
+function symptomsclassification()
+    % Load dataset with original headers preserved
+    data = readtable("C:\Krishna\FP\symptoms dataset.xlsx", 'VariableNamingRule', 'preserve');
+
+    % Extract column names (sanitize for MATLAB compatibility)
+    bodyParts = unique(data.Bodypart, 'stable');
+    diseases = data.Disease;
+    symptomNames = matlab.lang.makeValidName(data.Properties.VariableNames(3:end));
+
+    % Convert symptoms to numeric values (handles text, categorical, and numeric)
+    for i = 3:numel(data.Properties.VariableNames)
+        if iscell(data{:, i})  
+            data{:, i} = double(strcmp(data{:, i}, '1')); 
+        elseif iscategorical(data{:, i})
+            data{:, i} = double(data{:, i} == '1'); 
+        elseif isnumeric(data{:, i})  
+            data{:, i} = double(data{:, i} > 0);  % Convert nonzero numbers to 1
+        end
+    end
+
+    % Step 1: Select the affected body part
+    fprintf('Select an affected body part:\n');
+    for i = 1:numel(bodyParts)
+        fprintf('%d. %s\n', i, bodyParts{i});
+    end
+    bodyPartIdx = input('Enter the number corresponding to the body part: ');
+
+    % Validate body part selection
+    if bodyPartIdx < 1 || bodyPartIdx > numel(bodyParts)
+        error('Invalid selection. Please restart and choose a valid body part.');
+    end
+
+    % Filter dataset based on the selected body part
+    selectedBodyPart = bodyParts{bodyPartIdx};
+    filteredData = data(strcmp(data.Bodypart, selectedBodyPart), :);
+    Y_filtered = filteredData.Disease;
+    X_filtered = table2array(filteredData(:, 3:end)); % Extract symptoms as features
+
+    % Step 2: Train a Random Forest Classifier
+    rng(42); % Set random seed for reproducibility
+    model = TreeBagger(100, X_filtered, Y_filtered, 'Method', 'classification', 'OOBPrediction', 'on');
+
+    % Step 3: Display symptoms for selection
+    fprintf('\nSelect symptoms you observe from the list below:\n');
+    for i = 1:numel(symptomNames)
+        fprintf('%d. %s\n', i, symptomNames{i});
+    end
+    
+    symptomSelection = input('Enter the numbers corresponding to observed symptoms (comma-separated): ', 's');
+    symptomIndices = str2num(symptomSelection); % Convert input to array
+
+    % Validate symptom selection
+    if any(symptomIndices < 1) || any(symptomIndices > numel(symptomNames))
+        error('Invalid symptom selection. Please restart and choose valid symptoms.');
+    end
+
+    % Convert selected symptoms into binary test vector
+    testFeatures = zeros(1, numel(symptomNames));
+    testFeatures(symptomIndices) = 1;
+
+    % Step 4: Predict the disease using the trained model
+    predictedDisease = predict(model, testFeatures);
+    fprintf('The most likely disease for the selected body part (%s) and symptoms is: %s\n', selectedBodyPart, predictedDisease{1});
+
+    %% VALIDATION: Compute Accuracy & Confusion Matrix
+    % Predict all diseases in the filtered dataset
+    predictedDiseases = predict(model, X_filtered);
+
+    % Convert cell arrays to categorical for evaluation
+    actual = categorical(Y_filtered);
+    predicted = categorical(predictedDiseases);
+
+    % Compute Accuracy
+    accuracy = sum(actual == predicted) / numel(actual) * 100;
+    fprintf('\n✅ Model Accuracy: %.2f%%\n', accuracy);
+
+    % Compute Confusion Matrix
+    categories = unique([actual; predicted]); % Unique diseases
+    confMatrix = confusionmat(actual, predicted);
+    
+    % Convert categories to cell array of character vectors for table display
+    categories = cellstr(categories);
+
+    % Display Results
+    fprintf('\n📌 Confusion Matrix:\n');
+    disp(array2table(confMatrix, 'VariableNames', categories, 'RowNames', categories));
+    
+    disp('📌 Precision per Disease:');
+    precision = diag(confMatrix) ./ sum(confMatrix, 2);
+    disp(array2table(precision, 'VariableNames', {'Precision'}, 'RowNames', categories));
+
+    disp('📌 Recall per Disease:');
+    recall = diag(confMatrix) ./ sum(confMatrix, 1)';
+    disp(array2table(recall, 'VariableNames', {'Recall'}, 'RowNames', categories));
+
+    disp('📌 F1 Score per Disease:');
+    f1score = 2 * (precision .* recall) ./ (precision + recall);
+    disp(array2table(f1score, 'VariableNames', {'F1 Score'}, 'RowNames', categories));
+
+    %% Create Graphs in MATLAB
+    % Bar Graph for Precision, Recall, and F1 Score
+    figure;
+    bar([precision, recall, f1score]);
+    set(gca, 'XTickLabel', categories);
+    legend('Precision', 'Recall', 'F1 Score');
+    title('Performance Metrics by Disease');
+    xlabel('Disease');
+    ylabel('Score');
+    grid on;
+
+    % Heatmap for Confusion Matrix
+    figure;
+    heatmap(categories, categories, confMatrix);
+    title('Confusion Matrix');
+    xlabel('Predicted');
+    ylabel('Actual');
+end

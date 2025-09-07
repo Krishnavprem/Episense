@@ -1,0 +1,176 @@
+%% Multi-Class Cattle Skin Disease Detection with Strict Label Filtering
+
+% Define dataset root path
+datasetRoot = "C:\Krishna\FP\dataset graded"; % Update base path
+
+% Define correct disease categories (only with underscores)
+categories = ["fmd_mild", "fmd_moderate", "fmd_severe", ...
+              "lsd_mild", "lsd_moderate", "lsd_severe", ...
+              "mastitis_mild", "mastitis_moderate", "mastitis_severe", ...
+              "healthy"];
+
+% Generate paths for each category
+paths = fullfile(datasetRoot, categories);
+
+% Define image size
+imageSize = [224 224 3]; % Define the image size here
+
+% Load images and assign labels based on folder names
+imds = imageDatastore(paths, 'IncludeSubfolders', true, 'LabelSource', 'foldernames');
+
+% Convert to categorical and filter out unwanted labels
+imds.Labels = categorical(imds.Labels);
+validIdx = ismember(imds.Labels, categories); % Keep only the correct 10 labels
+imds = subset(imds, validIdx); % Remove all images with incorrect labels
+
+% Ensure labels match exactly 10 classes
+imds.Labels = categorical(imds.Labels, categories); % Force labels to match the expected 10
+
+% Verify class count after filtering
+uniqueLabels = unique(imds.Labels);
+numUniqueLabels = numel(uniqueLabels);
+
+% Display detected labels
+disp("✅ Strictly Filtered Class Labels:");
+disp(uniqueLabels);
+
+if numUniqueLabels ~= 10
+    error("Mismatch in class labels! Expected 10 classes but found %d.", numUniqueLabels);
+end
+
+% Resize images to the desired input size
+imds.ReadFcn = @(filename) imresize(imread(filename), imageSize(1:2));
+
+% Split data into training (80%) and validation (20%) sets
+[trainImages, valImages] = splitEachLabel(imds, 0.8, 'randomized');
+
+% Define MiniBatchSize dynamically
+numTrainImages = numel(trainImages.Files);
+miniBatchSize = max(16, ceil(numTrainImages / 10)); % Ensures batch is not too small
+
+%% Define the Optimized CNN Architecture
+layers = [
+    imageInputLayer(imageSize) % Input layer
+
+    % Block 1
+    convolution2dLayer(3, 64, 'Padding', 'same', 'WeightsInitializer', 'he') % 3x3 conv, 64 filters
+    batchNormalizationLayer
+    reluLayer
+    maxPooling2dLayer(2, 'Stride', 2) % 2x2 max pooling
+
+    % Block 2
+    convolution2dLayer(3, 128, 'Padding', 'same', 'WeightsInitializer', 'he') % 3x3 conv, 128 filters
+    batchNormalizationLayer
+    reluLayer
+    maxPooling2dLayer(2, 'Stride', 2) % 2x2 max pooling
+
+    % Block 3
+    convolution2dLayer(3, 256, 'Padding', 'same', 'WeightsInitializer', 'he') % 3x3 conv, 256 filters
+    batchNormalizationLayer
+    reluLayer
+    maxPooling2dLayer(2, 'Stride', 2) % 2x2 max pooling
+
+    % Block 4
+    convolution2dLayer(3, 512, 'Padding', 'same', 'WeightsInitializer', 'he') % 3x3 conv, 512 filters
+    batchNormalizationLayer
+    reluLayer
+    globalAveragePooling2dLayer % Global average pooling
+
+    % Output Layers
+    fullyConnectedLayer(256, 'WeightsInitializer', 'he') % Fully connected layer
+    reluLayer
+    dropoutLayer(0.5) % Dropout for regularization
+
+    fullyConnectedLayer(10) % Output layer for 10 classes
+    softmaxLayer
+    classificationLayer
+];
+
+%% Training Options with Early Stopping
+options = trainingOptions('adam', ...
+    'InitialLearnRate', 5e-4, ... % Adjusted learning rate
+    'MaxEpochs', 100, ... % Increased epochs
+    'MiniBatchSize', miniBatchSize, ...
+    'ValidationData', valImages, ...
+    'ValidationFrequency', ceil(numel(trainImages.Files) / miniBatchSize), ...
+    'Verbose', true, ...
+    'Plots', 'training-progress', ...
+    'Shuffle', 'every-epoch', ...
+    'ExecutionEnvironment', 'auto', ...
+    'L2Regularization', 1e-4, ... % L2 regularization
+    'ValidationPatience', 10); % Stop training if validation loss does not improve for 10 epochs
+
+%% Train the Network
+[net, trainInfo] = trainNetwork(trainImages, layers, options);
+
+%% Plot Training and Validation Curves
+figure;
+subplot(2, 1, 1);
+plot(trainInfo.TrainingLoss, 'LineWidth', 2);
+hold on;
+plot(trainInfo.ValidationLoss, 'LineWidth', 2);
+title('Training and Validation Loss');
+xlabel('Epoch');
+ylabel('Loss');
+legend('Training Loss', 'Validation Loss');
+grid on;
+
+subplot(2, 1, 2);
+plot(trainInfo.TrainingAccuracy, 'LineWidth', 2);
+hold on;
+plot(trainInfo.ValidationAccuracy, 'LineWidth', 2);
+title('Training and Validation Accuracy');
+xlabel('Epoch');
+ylabel('Accuracy');
+legend('Training Accuracy', 'Validation Accuracy');
+grid on;
+
+%% Generate Predictions and Confusion Matrix
+% Get Predictions on Validation Set
+[YPred, scores] = classify(net, valImages);
+
+% Get True Labels
+YTrue = valImages.Labels;
+
+% Compute Accuracy
+accuracy = mean(YPred == YTrue) * 100;
+fprintf('Validation Accuracy: %.2f%%\n', accuracy);
+
+% Plot Normalized Confusion Matrix
+figure;
+confusionchart(YTrue, YPred, 'Normalization', 'row-normalized');
+title('Confusion Matrix - Cattle Skin Disease Classification');
+
+% Compute Precision, Recall, and F1-Score
+confusionMat = confusionmat(YTrue, YPred);
+precision = diag(confusionMat) ./ sum(confusionMat, 1)'; % Column-wise precision
+recall = diag(confusionMat) ./ sum(confusionMat, 2); % Row-wise recall
+f1Score = 2 * (precision .* recall) ./ (precision + recall); % F1-score calculation
+
+% Display classification metrics
+disp("🔹 Classification Metrics:");
+disp(table(precision, recall, f1Score, 'RowNames', categories));
+
+%% Visualize Misclassified Images
+% Find misclassified indices
+misclassifiedIdx = find(YPred ~= YTrue);
+
+% Display up to 5 misclassified images
+misclassifiedSamples = struct();
+for i = 1:min(5, numel(misclassifiedIdx))
+    misclassifiedSamples(i).TrueLabel = string(YTrue(misclassifiedIdx(i)));
+    misclassifiedSamples(i).PredictedLabel = string(YPred(misclassifiedIdx(i)));
+    misclassifiedSamples(i).Image = readimage(valImages, misclassifiedIdx(i));
+
+    figure;
+    imshow(misclassifiedSamples(i).Image);
+    title(sprintf('True: %s, Predicted: %s', misclassifiedSamples(i).TrueLabel, misclassifiedSamples(i).PredictedLabel));
+end
+
+%% Save Training Results and Model
+save('trained_network.mat', 'net'); % Save trained network
+save('training_options.mat', 'options', 'trainInfo'); % Save training options & info
+save('classification_results.mat', 'YPred', 'scores', 'YTrue'); % Save classification results
+save('misclassified_samples.mat', 'misclassifiedSamples'); % Save misclassified images
+
+disp("✅ Model training and evaluation completed successfully! Trained data has been saved.");

@@ -1,0 +1,289 @@
+function cattleHealthMonitoringGUI()
+    % Create the main figure window
+    mainFig = uifigure('Name', 'Cattle Health Monitoring', 'Position', [100, 100, 1000, 600]);
+
+    % Add a title to the GUI
+    titleLabel = uilabel(mainFig, 'Text', 'CATTLE HEALTH MONITORING', ...
+        'FontSize', 18, 'FontWeight', 'bold', ...
+        'Position', [350, 550, 300, 30], 'HorizontalAlignment', 'center');
+
+    % Create left and right panels for symptom and image classification
+    leftPanel = uipanel(mainFig, 'Title', 'Symptom Classification', 'Position', [0, 0, 500, 600]);
+    rightPanel = uipanel(mainFig, 'Title', 'Image Classification', 'Position', [500, 0, 500, 600]);
+
+    % Left panel: Input section for symptom classification
+    inputPanel = uipanel(leftPanel, 'Title', 'Input', 'Position', [0, 150, 500, 450]);
+
+    % Dropdown for selecting the type of input (Symptoms or Image)
+    inputTypeLabel = uilabel(inputPanel, 'Text', 'Type of Input:', ...
+        'Position', [10, 380, 100, 22]);
+    inputTypeDropdown = uidropdown(inputPanel, ...
+        'Items', {'Image', 'Symptoms'}, ...
+        'Position', [120, 380, 150, 22]);
+
+    % Dropdown for selecting the body part
+    bodyPartLabel = uilabel(inputPanel, 'Text', 'Body Part:', ...
+        'Position', [10, 340, 100, 22]);
+    bodyPartDropdown = uidropdown(inputPanel, ...
+        'Items', {'Abdomen', 'External parasites', 'Eye', 'Hooves', 'Mouth', ...
+                  'Respiratory tract', 'Reproductive organ', 'Skin', ...
+                  'Udder', 'Urinary tract'}, ...
+        'Position', [120, 340, 150, 22]);
+
+    % Panel for selecting symptoms
+    symptomPanel = uipanel(inputPanel, 'Title', 'Select Symptoms', ...
+        'Position', [10, 20, 480, 300]);
+
+    % List of symptoms
+    symptomsList = {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Lumps', 'Hair loss', 'Rashes', 'Bleeding', 'Infertility', 'Lameness', 'Blindness', 'Excessive tearing', 'Abnormal milk', 'Abortion'};
+    symptomCheckboxes = gobjects(1, numel(symptomsList)); % Array to store checkbox handles
+
+    % Create checkboxes for symptoms in two columns
+    verticalSpacing = 20; % Vertical space between checkboxes
+    startingY = 260; % Starting Y position for the first checkbox
+    columnSpacing = 180; % Horizontal space between columns
+
+    for i = 1:numel(symptomsList)
+        if mod(i, 2) == 1  % First column (odd indices)
+            xPos = 10;
+        else  % Second column (even indices)
+            xPos = 10 + columnSpacing;
+        end
+        symptomCheckboxes(i) = uicheckbox(symptomPanel, ...
+            'Text', symptomsList{i}, ...
+            'Position', [xPos, startingY - floor((i-1)/2) * verticalSpacing, 360, 20]);
+    end
+
+    % Mapping of body parts to associated symptoms
+    symptomMapping = containers.Map(...
+        {'Abdomen', 'External parasites', 'Eye', 'Hooves', 'Mouth', 'Respiratory tract', 'Reproductive organ', 'Skin', 'Udder', 'Urinary tract'}, ...
+        { ...
+            {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Lumps', 'Hair loss', 'Rashes', 'Bleeding', 'Infertility'}, ...
+            {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Anemia', 'Blisters', 'Lumps', 'Hair loss', 'Rashes', 'Bleeding'}, ...
+            {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Dehydration', 'Blisters', 'Blindness', 'Excessive tearing'}, ...
+            {'Fever', 'Weight loss', 'Lameness', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Lumps', 'Rashes', 'Bleeding'}, ...
+            {'Fever', 'Weight loss', 'Lameness', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Lumps', 'Hair loss', 'Rashes', 'Bleeding'}, ...
+            {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Rashes', 'Bleeding'}, ...
+            {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Abnormal milk', 'Abortion', 'Infertility'}, ...
+            {'Fever', 'Weight loss', 'Lameness', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Lumps', 'Hair loss', 'Rashes', 'Bleeding'}, ...
+            {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Dehydration', 'Anemia', 'Blisters', 'Abnormal milk'}, ...
+            {'Fever', 'Weight loss', 'Swelling', 'Discharge', 'Dehydration', 'Anemia'} ...
+        });
+
+    % Set callback for body part dropdown to update symptom visibility
+    bodyPartDropdown.ValueChangedFcn = @(dd, event) updateSymptomsVisibility(dd, symptomCheckboxes, symptomMapping);
+
+    % Initially update symptom visibility based on the default body part
+    updateSymptomsVisibility(bodyPartDropdown, symptomCheckboxes, symptomMapping);
+
+    % Submit button for symptom classification
+    submitButton = uibutton(inputPanel, 'Text', 'Submit', ...
+        'Position', [200, 10, 100, 30], ...
+        'ButtonPushedFcn', @(btn, event) callPredictionModel(bodyPartDropdown, inputTypeDropdown, symptomCheckboxes, symptomsList));
+
+    % Output panel for displaying prediction results
+    outputPanel = uipanel(leftPanel, 'Title', 'Prediction Results', 'Position', [0, 0, 500, 150]);
+
+    % Field to display predicted disease
+    diseaseLabel = uilabel(outputPanel, 'Text', 'Predicted Disease:', ...
+        'Position', [10, 50, 120, 22]);
+    diseaseField = uieditfield(outputPanel, 'text', 'Position', [140, 50, 300, 22]);
+
+    % Right panel: Image classification section
+    imagePanel = uipanel(rightPanel, 'Title', 'Image Input', 'Position', [10, 180, 480, 400]);
+
+    % Button to upload an image
+    uploadButton = uibutton(imagePanel, 'Text', 'Upload Image', ...
+        'Position', [200, 20, 100, 30], ...
+        'ButtonPushedFcn', @(btn, event) uploadImage());
+
+    % Axes for displaying the uploaded image
+    imageAxes = axes(imagePanel, 'Position', [0.1, 0.2, 0.8, 0.7]);
+
+    % Panel for displaying image classification results
+    resultPanel = uipanel(rightPanel, 'Title', 'Prediction Results', 'Position', [10, 10, 480, 150]);
+    resultLabel = uilabel(resultPanel, 'Text', 'Predicted Disease:', ...
+        'Position', [10, 50, 120, 22]);
+    imageDiseaseField = uieditfield(resultPanel, 'text', 'Position', [140, 50, 300, 22]);
+
+    % Variable to store the current image path
+    currentImage = '';
+
+    % Load pre-trained models for image classification
+    cnnModel = load('trained_network.mat'); % CNN model
+    densenetModel = load('trainedDenseNet_10Classes_Final.mat'); % DenseNet model
+    googlenetModel = load('trainedGoogleNet_10Classes_Final.mat'); % GoogleNet model
+
+    % Function to handle image upload
+    function uploadImage()
+        [fileName, filePath] = uigetfile({'*.jpg;*.png;*.jpeg', 'Image Files'}, 'Select an Image');
+        if fileName
+            % Load and display the selected image
+            currentImage = fullfile(filePath, fileName);
+            img = imread(currentImage);
+            imshow(img, 'Parent', imageAxes);
+
+            % Process the image and make a prediction
+            processImageAndPredict(img);
+        end
+    end
+
+    % Function to process the uploaded image and make a prediction
+    function processImageAndPredict(img)
+        % Resize the image to match the input size of the models
+        img = imresize(img, [224, 224]);
+
+        % Convert the image to a 4D array (required for the models)
+        img = reshape(img, [224, 224, 3, 1]);
+
+        % Predict using all three models
+        cnnScores = predict(cnnModel.net, img); % CNN predictions
+        densenetScores = predict(densenetModel.trainedNet, img); % DenseNet predictions
+        googlenetScores = predict(googlenetModel.trainedNet, img); % GoogleNet predictions
+
+        % Get the predicted labels (class with the highest score)
+        [~, cnnMaxIdx] = max(cnnScores);
+        [~, densenetMaxIdx] = max(densenetScores);
+        [~, googlenetMaxIdx] = max(googlenetScores);
+
+        % Retrieve the predicted labels
+        cnnPrediction = cnnModel.net.Layers(end).Classes(cnnMaxIdx);
+        densenetPrediction = densenetModel.trainedNet.Layers(end).Classes(densenetMaxIdx);
+        googlenetPrediction = googlenetModel.trainedNet.Layers(end).Classes(googlenetMaxIdx);
+
+        % Compare confidence scores and select the best prediction
+        if cnnScores(cnnMaxIdx) > densenetScores(densenetMaxIdx) && cnnScores(cnnMaxIdx) > googlenetScores(googlenetMaxIdx)
+            bestResult = cnnPrediction;
+        elseif densenetScores(densenetMaxIdx) > googlenetScores(googlenetMaxIdx)
+            bestResult = densenetPrediction;
+        else
+            bestResult = googlenetPrediction;
+        end
+
+        % Display the best matching result
+        imageDiseaseField.Value = char(bestResult);
+    end
+
+    % Function to call the prediction model for symptom-based classification
+    function callPredictionModel(bodyPartDropdown, inputTypeDropdown, symptomCheckboxes, symptomsList)
+        % Load the dataset with original headers preserved
+        data = readtable("C:\Krishna\FP\symptoms dataset.xlsx", 'VariableNamingRule', 'preserve');
+
+        % Extract column names (sanitize for MATLAB compatibility)
+        bodyParts = unique(data.Bodypart, 'stable');
+        diseases = data.Disease;
+        symptomNames = matlab.lang.makeValidName(data.Properties.VariableNames(3:end));
+
+        % Convert symptoms to numeric values (handles text, categorical, and numeric)
+        for i = 3:numel(data.Properties.VariableNames)
+            if iscell(data{:, i})  
+                data{:, i} = double(strcmp(data{:, i}, '1')); 
+            elseif iscategorical(data{:, i})
+                data{:, i} = double(data{:, i} == '1'); 
+            elseif isnumeric(data{:, i})  
+                data{:, i} = double(data{:, i} > 0);  % Convert nonzero numbers to 1
+            end
+        end
+
+        % Get the selected body part
+        selectedBodyPart = bodyPartDropdown.Value;
+
+        % Filter the dataset based on the selected body part
+        filteredData = data(strcmp(data.Bodypart, selectedBodyPart), :);
+        Y_filtered = filteredData.Disease;
+        X_filtered = table2array(filteredData(:, 3:end)); % Extract symptoms as features
+
+        % Train a Random Forest Classifier
+        rng(42); % Set random seed for reproducibility
+        model = TreeBagger(100, X_filtered, Y_filtered, 'Method', 'classification', 'OOBPrediction', 'on');
+
+        % Get selected symptoms
+        selectedSymptoms = symptomsList(arrayfun(@(cb) cb.Value, symptomCheckboxes));
+
+        % Convert selected symptoms into a binary test vector
+        testFeatures = zeros(1, numel(symptomNames));
+        for i = 1:numel(selectedSymptoms)
+            idx = find(strcmp(selectedSymptoms{i}, symptomsList));
+            if ~isempty(idx)
+                testFeatures(idx) = 1;
+            end
+        end
+
+        % Predict the disease using the trained model
+        predictedDisease = predict(model, testFeatures);
+
+        % Display the predicted disease in the GUI field
+        diseaseField.Value = char(predictedDisease{1});
+    end
+
+    % Function to update the visibility of symptoms based on the selected body part
+    function updateSymptomsVisibility(bodyPartDropdown, symptomCheckboxes, symptomMapping)
+        % Get the selected body part
+        selectedBodyPart = bodyPartDropdown.Value;
+
+        % Get the symptoms associated with the selected body part
+        associatedSymptoms = symptomMapping(selectedBodyPart);
+
+        % Loop through all checkboxes and set their visibility
+        yOffset = 260; % Starting Y position for the first checkbox
+        verticalSpacing = 20; % Vertical space between checkboxes
+        columnSpacing = 180; % Horizontal space between columns
+
+        % Separate checkboxes into two columns
+        column1 = symptomCheckboxes(1:2:end); % First column (odd indices)
+        column2 = symptomCheckboxes(2:2:end); % Second column (even indices)
+
+        % Update positions for the first column
+        yOffsetCol1 = yOffset;
+        for i = 1:numel(column1)
+            if ismember(column1(i).Text, associatedSymptoms)
+                column1(i).Visible = 'on';
+                column1(i).Position = [10, yOffsetCol1, 360, 20];
+                yOffsetCol1 = yOffsetCol1 - verticalSpacing;
+            else
+                column1(i).Visible = 'off';
+            end
+        end
+
+        % Update positions for the second column
+        yOffsetCol2 = yOffset;
+        for i = 1:numel(column2)
+            if ismember(column2(i).Text, associatedSymptoms)
+                column2(i).Visible = 'on';
+                column2(i).Position = [10 + columnSpacing, yOffsetCol2, 360, 20];
+                yOffsetCol2 = yOffsetCol2 - verticalSpacing;
+            else
+                column2(i).Visible = 'off';
+            end
+        end
+    end
+
+    % Function to toggle input components based on the selected input type
+    function toggleInputComponents(dd, bodyPartDropdown, symptomPanel, submitButton, imagePanel, uploadButton)
+        if strcmp(dd.Value, 'Symptoms')
+            % Enable symptom-related components
+            bodyPartDropdown.Enable = 'on';
+            symptomPanel.Enable = 'on';
+            submitButton.Enable = 'on';
+
+            % Disable image-related components
+            imagePanel.Enable = 'off';
+            uploadButton.Enable = 'off';
+        else
+            % Enable image-related components
+            imagePanel.Enable = 'on';
+            uploadButton.Enable = 'on';
+
+            % Disable symptom-related components
+            bodyPartDropdown.Enable = 'off';
+            symptomPanel.Enable = 'off';
+            submitButton.Enable = 'off';
+        end
+    end
+
+    % Set the callback for the input type dropdown after all components are initialized
+    inputTypeDropdown.ValueChangedFcn = @(dd, event) toggleInputComponents(dd, bodyPartDropdown, symptomPanel, submitButton, imagePanel, uploadButton);
+
+    % Initially call the toggle function to set the correct state
+    toggleInputComponents(inputTypeDropdown, bodyPartDropdown, symptomPanel, submitButton, imagePanel, uploadButton);
+end

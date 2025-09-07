@@ -1,0 +1,124 @@
+
+older = "C:\Krishna\FP\dataset graded";
+
+% Define the 10 correct categories
+categories = ["fmd_mild", "fmd_moderate", "fmd_severe", ...
+              "lsd_mild", "lsd_moderate", "lsd_severe", ...
+              "mastitis_mild", "mastitis_moderate", "mastitis_severe", ...
+              "healthy"];
+
+% Define image size
+imageSize = [224 224 3];
+
+%% Load and Filter Dataset
+allImages = imageDatastore(mainFolder, 'IncludeSubfolders', true, 'LabelSource', 'foldernames');
+
+% Convert to categorical and filter labels
+allImages.Labels = categorical(allImages.Labels);
+validIdx = ismember(allImages.Labels, categories);
+allImages = subset(allImages, validIdx); % Keep only valid classes
+allImages.Labels = categorical(allImages.Labels, categories); % Ensure label order
+
+% Verify class count
+uniqueLabels = unique(allImages.Labels);
+numUniqueLabels = numel(uniqueLabels);
+disp("✅ Strictly Filtered Class Labels:");
+disp(uniqueLabels);
+
+if numUniqueLabels ~= 10
+    error("Mismatch in class labels! Expected 10 but found %d.", numUniqueLabels);
+end
+
+% Resize images dynamically during reading
+allImages.ReadFcn = @(filename) imresize(imread(filename), imageSize(1:2));
+
+% Split dataset into training (80%) and validation (20%)
+[trainImages, valImages] = splitEachLabel(allImages, 0.8, 'randomized');
+
+%% Load Pre-trained DenseNet-201 and Modify Layers
+net = densenet201;
+lgraph = layerGraph(net);
+
+% Remove the last classification layers
+lgraph = removeLayers(lgraph, {'fc1000', 'fc1000_softmax', 'ClassificationLayer_fc1000'});
+
+% Define number of classes
+numClasses = 10;
+
+% Add new classification layers
+newLayers = [
+    fullyConnectedLayer(numClasses, 'Name', 'fc_new', 'WeightLearnRateFactor', 10, 'BiasLearnRateFactor', 10)
+    softmaxLayer('Name', 'softmax_new')
+    classificationLayer('Name', 'classification_new')
+];
+
+% Connect new layers
+lgraph = addLayers(lgraph, newLayers);
+lgraph = connectLayers(lgraph, 'avg_pool', 'fc_new');
+
+%% Define Training Options with Early Stopping and Model Saving
+patience = 10; % Number of epochs to wait before stopping if no improvement
+bestValAccuracy = 0; % Track the best validation accuracy
+
+% Training options
+options = trainingOptions('adam', ...
+    'InitialLearnRate', 1e-4, ...
+    'MaxEpochs', 100, ...
+    'MiniBatchSize', 32, ...
+    'ValidationData', valImages, ...
+    'ValidationFrequency', 10, ...
+    'Shuffle', 'every-epoch', ...
+    'LearnRateSchedule', 'piecewise', ...
+    'LearnRateDropFactor', 0.5, ...
+    'LearnRateDropPeriod', 10, ...
+    'Verbose', true, ...
+    'Plots', 'training-progress', ...
+    'OutputFcn', @(info) earlyStopAndSaveModel(info));
+
+%% Train the Model
+trainedNet = trainNetwork(trainImages, lgraph, options);
+
+% Save the final trained model
+save('trainedDenseNet_10Classes_Final.mat', 'trainedNet');
+
+%% Evaluate Model on Validation Data
+YPred = classify(trainedNet, valImages);
+valLabels = valImages.Labels;
+valAccuracy = sum(YPred == valLabels) / numel(valLabels);
+disp(['✅ Validation Accuracy: ', num2str(valAccuracy * 100), '%']);
+
+% Plot confusion matrix
+figure;
+confMat = confusionchart(valLabels, YPred);
+confMat.Title = 'Confusion Matrix for Validation Data (10 Classes)';
+confMat.RowSummary = 'row-normalized';
+confMat.ColumnSummary = 'column-normalized';
+
+%% Early Stopping and Model Saving Function
+function stop = earlyStopAndSaveModel(info)
+    persistent bestValAccuracy numEpochsNoImprovement
+    global patience  % Use the globally defined patience variable
+
+    if info.State == "start"
+        bestValAccuracy = 0;
+        numEpochsNoImprovement = 0;
+        stop = false;
+    elseif info.State == "iteration"
+        if ~isempty(info.ValidationAccuracy)
+            if info.ValidationAccuracy > bestValAccuracy
+                bestValAccuracy = info.ValidationAccuracy;
+                numEpochsNoImprovement = 0;
+                save('trainedDenseNet_10Classes_Best.mat', 'info'); % Save best model
+                disp(['💾 Best model saved with validation accuracy: ', num2str(bestValAccuracy * 100), '%']);
+            else
+                numEpochsNoImprovement = numEpochsNoImprovement + 1;
+            end
+        end
+        if numEpochsNoImprovement >= patience
+            disp('⏹️ Early stopping triggered.');
+            stop = true;
+        else
+            stop = false;
+        end
+    end
+end
